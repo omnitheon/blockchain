@@ -25,6 +25,7 @@ import java.util.*;
 import java.security.*;
 import java.security.spec.*;
 import java.util.concurrent.*;
+import java.util.concurrent.locks.ReentrantLock;
 
 class Block implements Serializable { // DONE
   static final long serialVersionUID = 2L;
@@ -43,18 +44,26 @@ class Block implements Serializable { // DONE
   String remediation;
   String meds;
   int blockORIGIN;
+  String verifyingProcess;
 
   public Block() {
   }
 
   public Block(String blockID, String pHash, String data, String randomSeed) {
-    this.UUID = java.util.UUID.randomUUID().toString();
+    
     this.timestamp = Blockchain.getCurrentTime();
     this.blockID = blockID;
     this.pHash = pHash;
     setDataAttributes(data);
     this.randomSeed = randomSeed;
-    this.hash = generateSHA256Hash();
+    if (this.blockID.equals("-1")){
+      this.UUID = "00000000-0000-0000-0000-000000000000";
+      this.hash = generateSHA256Hash(true);
+    }
+    else {
+      this.UUID = java.util.UUID.randomUUID().toString();
+      this.hash = generateSHA256Hash(false);
+    }
     this.blockORIGIN = Blockchain.pnum;
   }
 
@@ -69,7 +78,7 @@ class Block implements Serializable { // DONE
     this.blockORIGIN = Blockchain.pnum;
   }
 
-  private void setDataAttributes(String data){
+  private void setDataAttributes(String data) {
     this.data = data;
     String[] arr = data.split(" ");
     this.fName = arr[0];
@@ -87,16 +96,22 @@ class Block implements Serializable { // DONE
     this.randomSeed = Integer.toString(rval);
   }
 
-  private String generateSHA256Hash() {
+  private String generateSHA256Hash(boolean genesisHash) {
     String h = "";
     int i = 0;
-    //System.out.println("[" + Blockchain.getProcString() + "] Starting work for NEW block using seed " + this.randomSeed);
+    // System.out.println("[" + Blockchain.getProcString() + "] Starting work for
+    // NEW block using seed " + this.randomSeed);
     do {
       try {
-        if (i > 0){
+        if (i > 0) {
           this.randomizeRandomSeed();
-          //System.out.println("\t[" + Blockchain.getProcString()+ "] Previous hash didnt meet requirements...trying " + this.randomSeed);
-          try { Thread.sleep(1000); } catch (Exception e) { e.printStackTrace(); }
+          // System.out.println("\t[" + Blockchain.getProcString()+ "] Previous hash didnt
+          // meet requirements...trying " + this.randomSeed);
+          try {
+            Thread.sleep(1000);
+          } catch (Exception e) {
+            e.printStackTrace();
+          }
         }
         MessageDigest md = MessageDigest.getInstance("SHA-256");
 
@@ -112,12 +127,14 @@ class Block implements Serializable { // DONE
         }
 
         h = sb.toString();
+        if (genesisHash)
+          return h;
         i++;
       } catch (NoSuchAlgorithmException x) {
         x.printStackTrace();
       }
-    } while (h.substring(0, 1).equals("a") || h.substring(0, 1).equals("b") || h.substring(0, 1).equals("c") ||
-              h.substring(0, 1).equals("d") || h.substring(0, 1).equals("e") || h.substring(0, 1).equals("f")  );
+    } while (h.substring(0, 1).equals("a") || h.substring(0, 1).equals("b") || h.substring(0, 1).equals("c")
+        || h.substring(0, 1).equals("d") || h.substring(0, 1).equals("e") || h.substring(0, 1).equals("f"));
     return h;
   }
 
@@ -133,6 +150,10 @@ class Block implements Serializable { // DONE
     this.blockID = ID;
   }
 
+  public void setVerifyingProcess(String procID){
+    this.verifyingProcess = procID;
+  }
+
   public void setBlockUUID() {
     this.UUID = java.util.UUID.randomUUID().toString();
     this.blockORIGIN = Blockchain.pnum;
@@ -143,18 +164,18 @@ class Block implements Serializable { // DONE
   }
 
   public void VERIFY_BLOCK() {
-    this.hash = generateSHA256Hash();
+    this.hash = generateSHA256Hash(false);
   }
 
   public void setRandomSeed(String randomSeed) {
     this.randomSeed = randomSeed;
   }
 
-  public int getBlockORIGIN(){
+  public int getBlockORIGIN() {
     return this.blockORIGIN;
   }
 
-  public String getPatientFirstname(){
+  public String getPatientFirstname() {
     return this.fName;
   }
 
@@ -242,6 +263,8 @@ class Key { // DONE
 
 class BlockChainDatastructure implements Iterable<Block> { // DONE
   public ArrayList<Block> BC;
+  public String lastBlockID;
+  public String lastAddedHash = Blockchain.GENSIS_HASH;
 
   public BlockChainDatastructure() {
     this.BC = new ArrayList<Block>();
@@ -251,12 +274,23 @@ class BlockChainDatastructure implements Iterable<Block> { // DONE
     return new BlockIterator();
   }
 
-  public boolean add(Block b) {
-    for (Block temp : BC) {
-      if (temp.getBlockID().equals(b.getBlockID())) return false;
+  public boolean doesBlockUUIDExistAlready(Block b) {
+    for (Block temp : this.BC) {
+      if (temp.getBlockUUID().equals(b.getBlockUUID()))
+        return true;
     }
+    return false;
+  }
+
+  public void add(Block b) {
+    b.setPrevBlockHash(this.lastAddedHash);
+    this.lastBlockID = b.getBlockID();
+    this.lastAddedHash = b.getBlockHash();
     this.BC.add(b);
-    return true;
+  }
+
+  public String getLastAddedBlockID(){
+    return lastBlockID;
   }
 
   public int indexOf(Block b) {
@@ -288,7 +322,7 @@ class BlockChainDatastructure implements Iterable<Block> { // DONE
     return BC.get(0).getBlockUUID();
   }
 
-  public String getGenesisHash() {
+  public String getGenesisHash() { 
     return BC.get(0).getBlockHash();
   }
 
@@ -348,9 +382,8 @@ class PublicKeyWorker extends Thread { // DONE
       String data = in.readLine();
       Key publicKey = gson.fromJson(data, Key.class);
       Blockchain.publicKeyArray[Integer.parseInt(publicKey.processNum)] = publicKey;
-      // System.out.println("[" + Blockchain.getProcString() + "] PublicKeyWorker
-      // RECV " + Blockchain.getCurrentTime()
-      // + " - updating local datastructure...");
+      System.out.println("[" + Blockchain.getProcString() + "] PublicKeyWorker RECV " + Blockchain.getCurrentTime()
+          + " - updating local datastructure...");
       keySock.close();
     } catch (IOException x) {
       x.printStackTrace();
@@ -398,11 +431,6 @@ class UnverifiedBlockServer implements Runnable {
       System.out.println(ioe);
     }
   }
-  /*
-   * Inner class to share priority queue. We are going to place the unverified
-   * blocks (UVBs) into this queue in the order we get them, but they will be
-   * retrieved by a consumer process sorted by TimeStamp of when created.
-   */
 
   class UnverifiedBlockWorker extends Thread {
     Socket sock;
@@ -429,14 +457,6 @@ class UnverifiedBlockServer implements Runnable {
 
 }
 
-/*
- * We have received unverified blocks into a thread-safe concurrent access
- * queue. For this example, we retrieve them in order according to their
- * TimeStamp of when created. It must be concurrent safe because two or more
- * threads modifiy it "at once," (mutiple worker threads to add to the queue,
- * and a consumer thread to remove from it).
- */
-
 class UnverifiedBlockConsumer implements Runnable {
   PriorityBlockingQueue<Block> queue; // Passed from BC object.
   int PID;
@@ -461,26 +481,30 @@ class UnverifiedBlockConsumer implements Runnable {
     Gson prettyG = new GsonBuilder().setPrettyPrinting().create();
 
     try {
-      while (true) { // Consume from the incoming UVB queue. Do the (fake here) work to verify.
-        Block b = queue.take(); // Pop the next Block from the queue. Will blocked-wait on empty queue
-        if (b == null) break;
-        b.setBlockUUID();
-        b.setPrevBlockHash(prevHash);
+      while (true) {
+        Block b = queue.take();
+        if (b == null)
+          break;
+        if (Blockchain.BlockChain.doesBlockUUIDExistAlready(b))
+          continue;
+        //b.setBlockUUID();
+        b.setPrevBlockHash(Blockchain.BlockChain.lastAddedHash);
         b.setRandomSeed("12345");
+        b.setVerifyingProcess(Integer.toString(Blockchain.pnum));
         b.VERIFY_BLOCK();
-        prevHash = b.getBlockHash();
-        boolean succcessfulAdd = false;
-        succcessfulAdd = Blockchain.BlockChain.add(b);
-        if (succcessfulAdd) {
+        Blockchain.SLEEP(1);
+        b.setBlockID(Integer.toString(Integer.parseInt(Blockchain.BlockChain.getLastAddedBlockID())+1));
+        if (Blockchain.BlockChain.doesBlockUUIDExistAlready(b))
+          continue;
+        Blockchain.BlockChain.add(b);
         String BLOCKCHAINJSON = g.toJson(Blockchain.BlockChain);
-        String PRETTYBLOCKCHAINJSON = prettyG.toJson(Blockchain.BlockChain);
-        System.out.println(
-            "[" + Blockchain.getProcString() + "] " + "Successfully verified BlockID#"+b.getBlockID()+" and added to chain, size: "+Blockchain.BlockChain.size()+"...sending to consortium");      
         Multicast.BlockChainSend(BLOCKCHAINJSON);
-        System.out.println(PRETTYBLOCKCHAINJSON);
-        }
-      
+        String PRETTYBLOCKCHAINJSON = prettyG.toJson(Blockchain.BlockChain);
+        System.out.println("[" + Blockchain.getProcString() + "] " + "Successfully verified BlockID#" + b.getBlockID()
+            + " and added to chain...sending to consortium...chain size is " + Blockchain.BlockChain.size());
+        Blockchain.SLEEP(1);
       }
+
     } catch (Exception e) {
       System.out.println(e);
     }
@@ -524,11 +548,14 @@ class BlockchainServerWorker extends Thread { // DONE
         bc.add(b);
       Gson gb = new GsonBuilder().create();
       String BLOCKCHAINJSON = gb.toJson(bc);
-      System.out.println("[" + Blockchain.getProcString() + "] BlockchainServerWorker RECV from " + originProc + " "
-          + Blockchain.getCurrentTime() + " UUID of first block: " + bc.getGenesisUUID());
+      System.out.println("[" + Blockchain.getProcString() + "] BlockchainServerWorker RECV from " 
+                          + originProc + " " + Blockchain.getCurrentTime());
       sock.close();
       Blockchain.BlockChain = bc;
-      if (!(originProc.equals(Integer.toString(Blockchain.pnum)))) Blockchain.SLEEP(1);
+      if (Blockchain.pnum == 0)
+        Blockchain.generateJSONString(Blockchain.BlockChain, "BlockchainLedger.json");
+      
+      Blockchain.SLEEP(1);
     } catch (IOException x) {
       x.printStackTrace();
     }
@@ -583,18 +610,19 @@ class Multicast {
 
   }
 
-  public static void UnverifiedSend(String blockData, int BlockNum) {
+  public static void UnverifiedSend(String blockData) {
     Socket UVBsock;
     String TimeStampString = Blockchain.getCurrentTime() + "." + Blockchain.getProcString();
     Random r = new Random();
     int[] unverifiedPorts = new int[] { 4820, 4821, 4822 };
     Block BR = new Block();
-    BR.setBlockID(Integer.toString(BlockNum));
+    BR.setBlockUUID();
     BR.setBlockData(blockData);
     BR.setBlockTimestamp(TimeStampString); // Will be able to priority sort by TimeStamp
     ObjectOutputStream toServerOOS = null; // Stream for sending Java objects
     for (int i = 0; i < Blockchain.numProcesses; i++) {// Send some sample Unverified Blocks (UVBs) to each process
-      //System.out.println("[" + Blockchain.getProcString() + "] Sending UVB#"+Integer.toString(BlockNum)+" to process " + i + "...");
+      // System.out.println("[" + Blockchain.getProcString() + "] Sending
+      // UVB#"+Integer.toString(BlockNum)+" to process " + i + "...");
       try {
         UVBsock = new Socket("localhost", unverifiedPorts[i]);
         toServerOOS = new ObjectOutputStream(UVBsock.getOutputStream());
@@ -612,13 +640,13 @@ class Multicast {
 }
 
 public class Blockchain {
+  static private ReentrantLock mutex = new ReentrantLock();
   final static String GENSIS_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
   final static String HASHING_ALGORITHM = "RSA";
   static boolean hasNOTSentPKEY = true;
   static BlockChainDatastructure BlockChain = new BlockChainDatastructure();
   static String PKEYJSON;
   static int numProcesses = 3;
-  static int NUM_INPUT_FILES;
   static int pnum;
   static int publicKeyListenerPort;
   static int unverifiedBlockListenerPort;
@@ -651,8 +679,10 @@ public class Blockchain {
   }
 
   public static void SLEEP(long seconds) {
-    System.out.println("\nSLEEPING for "+seconds+"\n");
-    try { Thread.sleep(seconds * 1000); } catch (Exception e) {
+    System.out.println("\nSLEEPING for " + seconds + "\n");
+    try {
+      Thread.sleep(seconds * 1000);
+    } catch (Exception e) {
       e.printStackTrace();
     }
   }
@@ -747,46 +777,7 @@ public class Blockchain {
       Gson g = new GsonBuilder().create();
       PKEYJSON = g.toJson(PKEY);
 
-      /*
-       * Test signature with private key byte[] SIG = signData(genesisSHA256Bytes,
-       * KP.getPrivate()); System.out.println("[*] Siganture: "+SIG); boolean verified
-       * = verifySig(genesisSHA256Bytes, KP.getPublic(), SIG);
-       * System.out.println("[*] Has the signature been verified: " + verified);
-       * System.out.println("[*] String Representation of Original SHA256 Hash: " +
-       * genesisSHA256Hash); System.out.
-       * println("[*] Hexidecimal byte[] Representation of Original SHA256 Hash: " +
-       * genesisSHA256Bytes);
-       */
-
-      /*
-       * Test signature works with SIGNEDSHA256 String SignedSHA256 =
-       * Base64.getEncoder().encodeToString(SIG);
-       * System.out.println("[*] The signed SHA-256 string: \n\t" + SignedSHA256);
-       * byte[] testSIG = Base64.getDecoder().decode(SignedSHA256);
-       * System.out.println("[*] Test Siganture from SignedSHA256: "+testSIG);
-       * System.out.println("[*] Testing restore of signature: " +
-       * Arrays.equals(testSIG, SIG)); verified = verifySig(genesisSHA256Bytes,
-       * KP.getPublic(), testSIG);
-       * System.out.println("[*] Has the restored signature been verified: " +
-       * verified); String publicKeyJSON = generateJSONString(publicKey,
-       * publicKeyFileName);
-       */
-
-      /*
-       * Recreate Public Key from JSON READ
-       * System.out.println("[*] Recreating public key from JSON READ..."); String
-       * newPublicKey = readJSONPublicKeyString(publicKeyFileName);
-       * System.out.println("[*] New PublicKey from JSON READ: \n\t"+newPublicKey);
-       * byte[] newPublicKeyBytes = Blockchain.convertToBytes(newPublicKey);
-       * System.out.println("[*] New PublicKeyBytes from JSON READ: "
-       * +newPublicKeyBytes); X509EncodedKeySpec pubSpec = new
-       * X509EncodedKeySpec(newPublicKeyBytes); KeyFactory keyFactory =
-       * KeyFactory.getInstance(HASHING_ALGORITHM); PublicKey RestoredPublicKey =
-       * keyFactory.generatePublic(pubSpec); verified = verifySig(genesisSHA256Bytes,
-       * RestoredPublicKey, testSIG); System.out.
-       * println("[*] Has the CONVERTED-FROM-JSON-STRING signature been verified: " +
-       * verified + "\n");
-       */
+     
 
       new Thread(new PublicKeyServer()).start(); // New thread to process incoming public keys
       new Thread(new UnverifiedBlockServer(ourPriorityQueue)).start(); // New thread to process incoming unverified
@@ -798,54 +789,44 @@ public class Blockchain {
         Blockchain.hasNOTSentPKEY = false; // now it has..
         Multicast.KeySend(PKEYJSON);
       }
-        
 
-      while (hasNOTSentPKEY) Blockchain.SLEEP(1);
+      while (hasNOTSentPKEY) {
+        System.out.println("Waiting for P2 to send public keys...");
+        Blockchain.SLEEP(1);
+      }
 
-      Blockchain.SLEEP(2);
-
-      for (int i = 0; i < 3; i++)
-        System.out.println("[" + Blockchain.getProcString() + "] " + "Received process " + i + " public key");
+      Blockchain.SLEEP(5);
 
       String INPUT_FILE_CONVENTION = "BlockInput";
       String INPUT_FILE_EXTENSION = ".txt";
-      NUM_INPUT_FILES = 3;
       ArrayList<String> dataInput = new ArrayList<String>();
 
-      for (int i = 0; i < NUM_INPUT_FILES; i++) {
-        String blockInputFileName = INPUT_FILE_CONVENTION + Integer.toString(i) + INPUT_FILE_EXTENSION;
-        System.out
-            .println("[" + Blockchain.getProcString() + "] " + "Reading unverified data from " + blockInputFileName);
-        ArrayList<String> temp = readInputFile(blockInputFileName);
-        for (String s : temp)
-          dataInput.add(s);
-      }
+      String blockInputFileName = INPUT_FILE_CONVENTION + Integer.toString(pnum) + INPUT_FILE_EXTENSION;
+      System.out
+          .println("[" + Blockchain.getProcString() + "] " + "Reading unverified data from " + blockInputFileName);
+      ArrayList<String> temp = readInputFile(blockInputFileName);
+      for (String s : temp)
+        dataInput.add(s);
 
-      System.out.println("[" + Blockchain.getProcString() + "] " + NUM_INPUT_FILES + " files ingested..."
-      + dataInput.size() + " unverified blocks ready...");
+      System.out.println(
+          "[" + Blockchain.getProcString() + "] 1 file ingested..." + dataInput.size() + " unverified blocks ready...");
+
+      Blockchain.SLEEP(5);
       
-      int j = 0;
-      for (String s : dataInput)
-      {
-        Multicast.UnverifiedSend(s, j++); // Multicast some new unverified blocks out to all servers as data
+      for (String s : dataInput){
+        Multicast.UnverifiedSend(s); // Multicast some new unverified blocks out to all servers as data
         Blockchain.SLEEP(1);
       }
       Blockchain.SLEEP(5);
 
-     
-
-      System.out.println("[" + Blockchain.getProcString() + "] "
-          + "Building the block chain...ALL block hashes must NOT start with 'a', 'b', 'c', 'd', 'e', or 'f'.");
       // BUILDS GENESIS BLOCK
       System.out.println("[" + Blockchain.getProcString() + "] " + "Building the genesis block...");
-      Block genesisRecord = generateGenesisBlock();
+      Block genesisRecord = Blockchain.generateGenesisBlock();
       String genesisSHA256Hash = genesisRecord.getBlockHash();
       byte[] genesisSHA256Bytes = genesisSHA256Hash.getBytes();
-      BlockChain.add(genesisRecord);
-
-      Blockchain.SLEEP(3);
+      Blockchain.BlockChain.add(genesisRecord);
       System.out.println("[" + Blockchain.getProcString() + "] "
-          + "Genesis block has been built. The blockchain has been initialized...ready to perform work...");
+          + "Building the block chain...ALL verified block hashes must NOT start with 'a', 'b', 'c', 'd', 'e', or 'f'.");
 
       Blockchain.SLEEP(5);
       new Thread(new UnverifiedBlockConsumer(ourPriorityQueue)).start();
@@ -855,7 +836,7 @@ public class Blockchain {
     }
   }
 
-  public Block generateGenesisBlock() {
+  public static Block generateGenesisBlock() {
     return new Block("-1", GENSIS_HASH, "Genesis Block 9999.99.99 999-99-999 99999 999999 999999999", "12345");
   }
 
@@ -863,6 +844,17 @@ public class Blockchain {
     Gson g = new GsonBuilder().setPrettyPrinting().create();
     writeJSONStringToDisk(g, a, fileName);
     return g.toJson(a);
+  }
+
+  public static String generateJSONString(BlockChainDatastructure a, String fileName) {
+    try {
+      mutex.lock();
+      Gson g = new GsonBuilder().setPrettyPrinting().create();
+      writeJSONStringToDisk(g, a, fileName);
+      return g.toJson(a);
+    } finally {
+      mutex.unlock();
+    }
   }
 
   public String generateJSONString(Key k, String fileName) {
@@ -895,6 +887,14 @@ public class Blockchain {
   public void writeJSONStringToDisk(Gson g, Key K, String fileName) {
     try (FileWriter writer = new FileWriter(fileName)) {
       g.toJson(K, writer);
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+  }
+
+  public static void writeJSONStringToDisk(Gson g, BlockChainDatastructure a, String fileName) {
+    try (FileWriter writer = new FileWriter(fileName)) {
+      g.toJson(a, writer);
     } catch (IOException e) {
       e.printStackTrace();
     }
